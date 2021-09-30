@@ -1,0 +1,392 @@
+\chapter{Outcome}
+\label{outcome}
+
+\section{Summary}
+
+The presented type refinement system introduces a framework for implementing
+liquid types for Sophia. It covers most of the language's features focusing on
+the data processing and arithmetics, providing also support for some
+blockchain-specific functionalities, such as state management and contract
+balance tracking. If needed, the algorithm can be extended to handle a greater
+range of expressions and judgements, taking advantage of the fact that most of
+the potentially desired cases can be reduced to the already implemented ones.
+Hagia therefore serves as a working proof-of-concept and an inspiration for
+utilising advanced type systems in smart contract development.
+
+\section{Value and use cases}
+
+In this section several examples of use of liquid types are presented. They show
+how Hagia eliminates arithmetic bugs, improper validation, implicit crashes and
+mistakes in logic. The example contracts are simplified to focus on the actual
+problems, but one could easily imagine them participating in more advanced
+decentralised systems. The error messages coming from the refiner have been
+edited for readability, although the predicates preserve their meanings.
+
+\subsection{Example: list length}
+
+Liquid types have found their application by finding bugs in functions that had
+been written as positive test cases for the project. These bugs most often
+turned out to be oversights, which had been entirely ignored by the original
+type checker. The following example presents a case of such a mistake. Let us
+consider the following attempt to define a function computing the length of a
+given list (\autoref{list_length_bug}).
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{List length --- with a bug}{list_length_bug}
+function
+  len : {lst : list('a)} => {res : int | res == lst}
+  len(lst) = switch(lst)
+    []   => 0
+    _::t => len(t)
+\end{code}
+
+If processed by Hagia--Sophia, the compiler yields the error:
+
+\begin{Verbatim}[samepage=true]
+Could not prove the promise at list_length.aes 2:3
+arising from the assumption of triggering the 2nd branch of `switch`:
+  res == lst
+from the assumption
+  res >= 0 && res == lst - 1
+\end{Verbatim}
+
+While it is indeed right that the result is greater or equal to zero, in the
+second \texttt{switch} case the inferred assumption is that it is also lesser
+than the length of \texttt{lst} by 1, instead of being equal to it. This not
+only indicates that something has gone wrong, but also suggests what is the
+issue. In this case, the bug was the missing incrementation of the tail's
+length, so the following code compiles fine (\autoref{list_length_fixed}).
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{List length --- fixed}{list_length_fixed}
+function
+  len : {lst : list('a)} => {res : int | res == lst}
+  len(lst) = switch(lst)
+    []   => 0
+    _::t => len(t) + 1
+\end{code}
+
+\subsection{Example: similar character oversight}
+\label{similar_character_example}
+
+This is not a very common kind of bug thanks to syntax highlighting featured by
+most of IDEs, but it can happen in some setups, especially if the code is copied
+from external sources. Let us consider a factorial function implemented for
+positive integers, as shown in the \autoref{faulty_factorial}.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Factorial --- with a bug}{faulty_factorial}
+function
+  factorial : {x : int | x > 0} => int
+  factorial(l) = 1
+  factorial(n) = n * factorial(n - 1)
+\end{code}
+
+The code may seem fine at first glance, especially considering the simplicity of
+the function and its rather casual definition. However, if evaluated by Hagia
+the following error message is shown:
+
+\begin{Verbatim}[samepage=true]
+Found dead code at 4:2 by proving that
+  !true && x == n && x > 0
+never holds.
+\end{Verbatim}
+
+It turns out that the last clause of \texttt{factorial} is never going to be
+visited. The pattern \texttt{n} is a variable, so it always matches. Hence, for
+the error to be right, the pattern \texttt{l} must catch the argument regardless
+of its value. And this is indeed true, because it is not an integer literal as
+expected, but a variable ``\textit{l}'' instead, which in monospace fonts
+frequently looks almost identical to the digit ``1''. The fixed version of the
+contract in the \autoref{fixed_factorial} compiles fine.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Factorial --- fixed}{fixed_factorial}
+function
+  factorial : {x : int | x > 0} => int
+  factorial(1) = 1
+  factorial(n) = n * factorial(n - 1)
+\end{code}
+
+\subsection{Example: spend-splitting contract}
+
+For a more blockchain-specific example, a simple spend-splitting contract can be
+considered (\autoref{split_spend}).
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Spend splitting contract --- no data
+    validation}{split_spend}
+include "List.aes"
+
+contract SpendSplit =
+
+  payable stateful entrypoint split(targets : list(address)) =
+    let value_per_person = Call.value / List.length(targets)
+    spend_to_all(value_per_person, targets)
+
+  stateful function
+    spend_to_all : (int, list(address)) => unit
+    spend_to_all(_, []) = ()
+    spend_to_all(value, addr::rest) =
+      Chain.spend(addr, value)
+      spend_to_all(value, rest)
+\end{code}
+
+The contract exposes an entrypoint which takes a list of addresses, splits the
+call value by the number of receivers and sends each of them an even amount of
+tokens (keeping the rest for itself). There are, however, several issues found
+by the refiner. An attempt to compile it results in the following
+errors:
+
+\begin{Verbatim}[samepage=true]
+Could not prove the promise at spend_split.aes 13:7:
+  value =< $init_balance && value >= 0
+from the assumption
+  true
+\end{Verbatim}
+\begin{Verbatim}[samepage=true]
+Could not prove the promise at spend_split.aes 13:7
+arising from an application of "C.spend_to_all" to its 2nd argument:
+  $balance_38 >= 0
+from the assumption
+  true
+\end{Verbatim}
+\begin{Verbatim}[samepage=true]
+Could not prove the promise at spend_split 6:39
+arising from an application of "(/)" to its right argument:
+  n_105 != 0
+from the assumption
+  true
+\end{Verbatim}
+
+In other words:
+
+\begin{enumerate}
+\item In the 13th line the function does not check if the contract can afford
+  the spend.
+\item The next failure in the same line is caused by the broken promise of the
+  balance being always non-negative. This is a direct cause of the previous
+  error, as \texttt{Chain.spend} reduces the current balance by a given amount.
+\item An insufficient-validation bug is present in the line 6, where the
+  received amount is divided by the length of the list. Since the list is
+  allowed to be empty, there is a case where this function crashes with a
+  division-by-zero error.
+\end{enumerate}
+
+In contrary to the previous example, this contract directly deals with the token
+flow, making it more blockhcain-specific. In order to fix it, a few additional
+checks and assertions are to be added (\autoref{fixed_split_spend}). The
+improved implementation differs from the previous one by an addtional
+\texttt{require} statement and a more precise type declaration. Thus, with just
+a little tweaking, the code is fixed and is accepted by the refiner\footnote{The
+  given example is a preview for the intended functionality of the refiner, and
+  it is not entirely supported yet. However, it is a part of the presented
+  theory and can be implemented with some modifications of handling the
+  functions' arguments. For a code snippet working with the current state of the
+  project, please see the appendix, \autoref{fixed_spend_split}}.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Spend splitting contract ---
+    fixed}{fixed_split_spend}
+include "List.aes"
+
+contract SpendSplit =
+
+  payable stateful entrypoint split(targets : list(address)) =
+    require(targets != [], "NO_TARGETS")
+    let value_per_person = Call.value / List.length(targets)
+    spend_to_all(value_per_person, targets)
+
+  stateful function
+    spend_to_all : ( {v : int | v >= 0 && v * l =< Contract.balance}
+                   , {l : list(address)}
+                   ) => unit
+    spend_to_all(_, []) = ()
+    spend_to_all(value, addr::rest) =
+      Chain.spend(addr, value)
+      spend_to_all(value, rest)
+\end{code}
+
+\subsection{Example: double token storage contract}
+\label{double_token_storage}
+
+Previous examples show situations where liquid types prevent uncontrolled
+crashing or arithmetic errors. Although the bugs can make trouble indirectly if
+used as parts of some larger systems, they themselves do not expose anybody to
+loses. To cover this case, this example visualises a scenario where one of the
+peers can actually be a victim of a token theft, due to a ``small'' oversight.
+
+The presented in the \autoref{double_token_storage_invalid} contract implements a
+simple token storage which can be used by two hard-coded accounts. Their
+balances are kept in \texttt{state} represented as a pair of integers. Users can
+withdraw and store their tokens at any time with the \texttt{withdraw} and
+\texttt{store} entrypoints. This example is quite simple, although in a
+real-life scenario its extension could be a part of a staking contract used in
+the \emph{hyperchains} protocol \cite{hyperchains}, for instance.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Double token storage contract --- missing
+    validation}{double_token_storage_invalid}
+contract DoubleStore =
+  type state = int * int
+  entrypoint init() = (0, 0)
+
+  stateful entrypoint withdraw(amount : int) =
+    let (s1, s2) = state
+    if(amount =< s1 && Call.caller == alice_address())
+      put((s1 - amount, s2))
+      Chain.spend(Call.caller, amount)
+    elif(amount =< s1 && Call.caller == bob_address())
+      put((s1, s2 - amount))
+      Chain.spend(Call.caller, amount)
+    else
+      abort("INVALID_WITHDRAW")
+
+  stateful entrypoint store() =
+    let (s1, s2) = state
+    if(Call.caller == alice_address())
+      put((s1 + amount, s2))
+    elif(Call.caller == bob_address())
+      put((s1, s2 + amount))
+    else
+      abort("INVALID_SOTRE")
+
+  function alice_address() =
+    ak_2nqfyixM9K5oKApAroETHEV4rxTTCAhAJvjYcUV3PF1326LUsx
+  function bob_address() =
+    ak_2CvLDbcJaw3CkyderTCgahzb6LpibPYgeodmCGcje8WuV5kiXR
+\end{code}
+
+The contract compiles fine with the original type checker. As expected,
+equipping Hagia exposes missing data validation by throwing the following
+errors:
+
+\begin{Verbatim}[samepage=true]
+Could not prove the promise at double_store.aes 9:7:
+  n_92 =< Contract.balance_0 && n_92 >= 0
+from the assumption
+  amount == n_92 && amount =< s1 && Call.caller == ak_2nqf...
+\end{Verbatim}
+\begin{Verbatim}[samepage=true]
+Could not prove the promise at double_store.aes 12:7:
+  n_179 =< Contract.balance_0 && n_179 >= 0
+from the assumption
+  amount == n_179 && amount =< s1 && Call.caller == ak_2CvL...
+\end{Verbatim}
+
+Indeed, the \texttt{withdraw} function does not check if the requested amount is
+actually stored in the contract, nor whether it is non-negative. A proper
+assertion makes the contract pass the liquid type check, as shown in the
+\autoref{double_token_storage_passing}. From now on, the examples shall skip the
+\texttt{store} entrypoint and the definitions of the hard-coded addresses.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Double token storage contract --- addressing
+    first Hagia errors}{double_token_storage_passing}
+contract DoubleStore =
+  type state = int * int
+  entrypoint init() = (0, 0)
+
+  stateful entrypoint withdraw(amount : int) =
+    require(amount > 0 && amount =< Contract.balance, "INVALID_AMOUNT")
+    let (s1, s2) = state
+    if(amount =< s1 && Call.caller == alice_address())
+      put((s1 - amount, s2))
+      Chain.spend(Call.caller, amount)
+    elif(amount =< s1 && Call.caller == bob_address())
+      put((s1, s2 - amount))
+      Chain.spend(Call.caller, amount)
+    else
+      abort("INVALID_WITHDRAW")
+\end{code}
+
+This contract is now accepted by the refiner, although its code does not make
+any explicit use of liquid types. Since Hagia comes with syntax for defining
+custom refinements, it is worth utilising them if possible. One of the most
+obvious moves is to represent balances as non-negative numbers as shown in the
+\autoref{double_token_storage_liquid_fail}.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Double token storage contract --- putting
+    explicit qualifications errors}{double_token_storage_liquid_fail}
+contract DoubleStore =
+  type state = {x1 : int | x1 >= 0} * {x2 : int | x2 >= 0}
+  entrypoint init() = (0, 0)
+
+  stateful entrypoint withdraw(amount : int) =
+    require(amount > 0 && amount =< Contract.balance, "INVALID_AMOUNT")
+    let (s1, s2) = state
+    if(amount =< s1 && Call.caller == alice_address())
+      put((s1 - amount, s2))
+      Chain.spend(Call.caller, amount)
+    elif(amount =< s1 && Call.caller == bob_address())
+      put((s1, s2 - amount))
+      Chain.spend(Call.caller, amount)
+    else
+      abort("INVALID_WITHDRAW")
+\end{code}
+
+After the changes, the contract no longer compiles. The refiner throws an error
+and reports the following issue:
+
+\begin{Verbatim}[samepage=true]
+Could not prove the promise at double_store.aes 12:7 :
+  s2_1 >= 0
+from the assumption
+  s2_1 == s2_0 - amount && amount =< s1_0 && s1_0 >= 0 && s2_0 >= 0
+\end{Verbatim}
+
+The error message points out that the broken promise has been created in the
+twelfth line, which is where \texttt{put} is used. It suggests that a possibly
+out-of-domain value is assigned to the contract's state. For that to be the
+case, a negative value must be assigned to one of the variables representing the
+balances of the clients.
+
+The variable \texttt{s2\_1} represents the updated balance of Bob. The refiner
+fails to prove its non-negativity from a set of assumptions that suspiciously
+assert that the withdrawn amount is not greater than \texttt{s1\_0}, which is
+the initial balance of Alice. The bug is therefore in the line 11, specifically
+in the \texttt{amount =< s1} check, which was supposed to verify if
+\texttt{amount} is lesser or equal to \texttt{s2} instead. This is a very common
+kind of mistake that usually comes from a bad habit of copying similar chunks of
+code with the intent of applying synchronous modifications to them.
+
+This bug is actually very dangerous. One of the users can withdraw more tokens
+than they have actually stored in the contract. Therefore, if Alice puts 100AE
+in it, Bob can freely take it all, leaving Alice with no way of retrieving her
+funds.
+
+Liquid types have therefore successfully prevented a faulty and easily
+exploitable contract from being deployed. To fix it, the check has to be changed
+to verify the right value as it is done in the
+\autoref{double_token_storage_fixed}.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Double token storage contract ---
+    fixed}{double_token_storage_fixed}
+contract DoubleStore =
+  type state = {x1 : int | x1 >= 0} * {x2 : int | x2 >= 0}
+  entrypoint init() = (0, 0)
+
+  stateful entrypoint withdraw(amount : int) =
+    require(amount > 0 && amount =< Contract.balance, "INVALID_AMOUNT")
+    let (s1, s2) = state
+    if(amount =< s1 && Call.caller == alice_address())
+      put((s1 - amount, s2))
+      Chain.spend(Call.caller, amount)
+    elif(amount =< s2 && Call.caller == bob_address()) // Fixed
+      put((s1, s2 - amount))
+      Chain.spend(Call.caller, amount)
+    else
+      abort("INVALID_WITHDRAW")
+\end{code}
+
+The solution was rather simple and did not require complicated refinements to
+reveal the bug. Although it was sufficient just to assert non-negative balances
+in this case, another important assumption is that both balances sum up to the
+balance of the whole contract. This could catch a hypothetical oversight where
+the withdrawn funds are not subtracted at all, for instance. In order to define
+it, the dependent products discussed in \autoref{dependent_products} have to be
+implemented, and the final state declaration would look like in the
+\autoref{double_token_storage_final}.
+
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Double token storage contract ---
+    final}{double_token_storage_final}
+contract DoubleStore =
+  type state = {x1 : int | x1 >= 0} *
+               {x2 : int | x2 >= 0 && x1 + x2 == Contract.balance}
+  entrypoint init() =
+    require(Call.value == 0, "NON_ZERO_INIT_VALUE")
+    (0, 0)
+\end{code}

@@ -1,0 +1,98 @@
+
+\definecolor{string_color}{rgb}{0.12, 0.3, 0.17}
+\lstdefinestyle{basic}{
+  basicstyle=\ttfamily,
+  numbers=left,
+  numberstyle=\color{gray}\ttfamily,
+  numbersep=5pt,
+  backgroundcolor=\color{white},
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  rulecolor=\color{black},
+  captionpos=b,
+  commentstyle=\color{gray},
+  stringstyle=\color{green},
+  keywordstyle=\bfseries\rmfamily,
+  emphstyle={\bf},
+  commentstyle=\it,
+  stringstyle=\ttfamily\color{string_color},
+  xleftmargin=2pt,
+  stepnumber=1,
+  numbersep=5pt,
+  belowcaptionskip=\bigskipamount,
+  belowskip=\bigskipamount,
+  aboveskip=\bigskipamount,
+  captionpos=b,
+  % escapeinside={*'}{'*},
+  tabsize=2,
+  columns=flexible,
+  keepspaces=true
+}
+
+
+\lstdefinelanguage{pseudocode}
+{
+  morekeywords={let, for, in, constraint, zip, fold_left, length, do, int, reachable, unreachable,
+    if, then, else, fun, end, return, var, filter, while, true, false, error, not},
+  morecomment=[l]{--},
+  morestring=[b]",
+  mathescape,
+  style=basic,
+}
+
+\lstdefinelanguage{smtlib}
+{
+  morekeywords={assert, push, pop, check, sat, sat, unsat, declare, const, Int, Bool},
+  morecomment=[l]{;},
+  morestring=[b]",
+  style=basic,
+  keywordstyle=\bfseries\ttfamily,
+}
+
+\lstdefinelanguage{bnf}
+{
+  morekeywords={::=},
+  morecomment=[l]{//},
+  morestring=[b]',
+  style=basic,
+}
+
+\lstdefinelanguage{sophia}
+{
+  language=caml,
+  keywords={contract, include, let, switch, type, record, datatype, if, elif, else, function,
+    stateful, payable, true, false, mod, public, entrypoint, private, indexed, namespace,
+    interface, main, int, bool, list, address, require},
+  sensitive=true,
+  morecomment=[l]{//},
+  morestring=[b]",
+  style=basic,
+}
+
+\lstdefinelanguage{erl}
+{
+  morekeywords={length, lists, length, zip, zip3, spec},
+  sensitive=false,
+  morecomment=[l]{\%},
+  morestring=[b]",
+  style=basic,
+  literate=
+  {->}{$\to{}$}{1}
+}
+
+
+\graphicspath{ {./images/} }
+
+\newenvironment{code}[4][htp]
+{\VerbatimEnvironment
+  \begin{figure}[#1]
+    \centering
+    \ifthenelse{\equal{#3}{}}{}{\caption{#3}}
+    \ifthenelse{\equal{#3}{}}{}{\label{#4}}
+\begin{minted}[linenos]{#2}}
+    {\end{minted}\end{figure}}
+
+\usemintedstyle{autumn}
+
+\xapptocmd{\ttfamily}{\frenchspacing}{}{}
