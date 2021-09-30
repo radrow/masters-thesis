@@ -1,0 +1,189 @@
+\chapter{Full Sophia syntax}
+\label{full_sophia_syntax}
+
+\section{Top level}
+\begin{lstlisting}[language=bnf]
+File ::= Block(TopDecl)
+
+TopDecl ::= ['payable'] 'contract' Con '=' Block(Decl)
+       | 'namespace' Con '=' Block(Decl)
+       | '@compiler' PragmaOp Version
+       | 'include' String
+
+\end{lstlisting}
+
+\section{Contract level}
+
+\begin{lstlisting}[language=bnf]
+Decl ::= 'type'     Id ['(' TVar* ')'] '=' TypeAlias
+       | 'record'   Id ['(' TVar* ')'] '=' RecordType
+       | 'datatype' Id ['(' TVar* ')'] '=' DataType
+       | (EModifier* 'entrypoint' | FModifier* 'function') Block(FunDecl)
+
+FunDecl ::= Id ':' Type
+          | Id Args [':' Type] '=' Block(Stmt)
+
+PragmaOp ::= '<' | '=<' | '==' | '>=' | '>'
+Version  ::= Sep1(Int, '.')
+
+EModifier ::= 'payable' | 'stateful'
+FModifier ::= 'stateful' | 'private'
+
+Args ::= '(' Sep(Pattern, ',') ')'
+
+\end{lstlisting}
+
+\section{Types}
+
+\begin{lstlisting}[language=bnf]
+TypeAlias  ::= Type
+RecordType ::= '{' Sep(FieldType, ',') '}'
+DataType   ::= Sep1(ConDecl, '|')
+
+FieldType  ::= Id ':' Type
+ConDecl    ::= Con ['(' Sep1(Type, ',') ')']
+
+Type ::= Domain '=>' Type
+       | Type '(' Sep(Type, ',') ')'
+       | '(' Type ')'
+       | 'unit' | Sep(Type, '*')
+       | Id | QId | TVar
+
+Domain ::= Type
+         | '(' Sep(Type, ',') ')'
+
+\end{lstlisting}
+
+\section{Function level}
+
+\begin{lstlisting}[language=bnf]
+Stmt ::= 'switch' '(' Expr ')' Block(Case)
+       | 'if' '(' Expr ')' Block(Stmt)
+       | 'elif' '(' Expr ')' Block(Stmt)
+       | 'else' Block(Stmt)
+       | 'let' LetDef
+       | Expr
+
+LetDef ::= Id Args [':' Type] '=' Block(Stmt)
+         | Pattern '=' Block(Stmt)
+
+Case    ::= Pattern '=>' Block(Stmt)
+Pattern ::= Expr
+
+Expr ::= '(' LamArgs ')' '=>' Block(Stmt)
+       | 'if' '(' Expr ')' Expr 'else' Expr
+       | Expr ':' Type
+       | Expr BinOp Expr
+       | UnOp Expr
+       | Expr '(' Sep(Expr, ',') ')'
+       | Expr '.' Id
+       | Expr '[' Expr ']'
+       | Expr '{' Sep(FieldUpdate, ',') '}'
+       | '[' Sep(Expr, ',') ']'
+       | '[' Expr '|' Sep(Generator, ',') ']'
+
+       | '[' Expr '..' Expr ']'
+       | '{' Sep(FieldUpdate, ',') '}'
+       | '(' Expr ')'
+       | Id | Con | QId | QCon
+       | Int | Bytes | String | Char
+       | AccountAddress | ContractAddress
+       | OracleAddress | OracleQueryId
+
+Generator ::= Pattern '<-' Expr
+            | 'if' '(' Expr ')'
+            | LetDef
+
+LamArgs ::= '(' Sep(LamArg, ',') ')'
+LamArg  ::= Id [':' Type]
+
+FieldUpdate ::= Path '=' Expr
+Path ::= Id
+       | '[' Expr ']'
+       | Path '.' Id
+       | Path '[' Expr ']'
+
+BinOp ::= '||' | '&&' | '<' | '>' | '=<' | '>=' | '==' | '!='
+        | '::' | '++' | '+' | '-' | '*' | '/' | 'mod'
+
+UnOp  ::= '-' | '!'
+\end{lstlisting}
+
+\section{Liquid types}
+\label{liquid_types_syntax}
+
+\begin{lstlisting}[language=bnf]
+LiquidType ::=
+  // Liquid type
+    '{' Id ':' SimpleType '|' Predicate '}'
+  | '{' Id ':' SimpleType '}'
+  // Liquid function
+  | DepDomain '=>' LiquidType
+  // Liquid list
+  | '{' Id ':' 'list' '(' LiquidType ')' '|' Predicate '}'
+  | '{' Id ':' 'list' '(' LiquidType ')' '}'
+  // Liquid record
+  | '{' TypeId '<:' Sep(DepFields, ',') '}'
+  // Liquid variant
+  | '{' TypeId '<:' Sep(DepConstructor, '|') '}'
+  // Tuples
+  | 'unit' | Sep(LiquidType, '*')
+  // Type application
+  | Type '(' Sep(LiquidType, ',') ')'
+  // Parens
+  | '(' LiquidType ')'
+  // Coercion
+  | Type
+
+SimpleType ::= Id | TVar
+
+TypeId ::= Id | QId
+
+Predicate ::= QualExpr | QualExpr '\&\&' Predicate
+
+QualExpr ::=
+    Bool
+  | Id
+  | QualExpr BinOp QualExpr | UnOp QualExpr
+
+DepField ::= Id ':' LiquidType
+DepConstructor ::= (Con | QCon) '(' Sep(LiquidType, ',') ')'
+\end{lstlisting}
+
+\chapter{Sophia examples}
+
+\section{Fixed spend splitting contract}
+\label{fixed_spend_split}
+
+The following contract passes the refined type check in the referred
+implementation. It is a bit underwhelming compared to the one shown in the
+\autoref{fixed_split_spend}, as it does not make the \texttt{spend\_to\_all}
+function entirely crash-resistant. What it improves, is making the error more
+explicit with a better message. Moreover, it effectively prevents the division
+by zero which could occur in the contract shown in the \autoref{split_spend}.
+
+\begin{lstlisting}[language=sophia]
+include "List.aes"
+
+contract SpendSplit =
+  payable stateful entrypoint split(targets : list(address)) =
+    require(targets != [], "NO_TARGETS")
+    let value_per_person = Call.value / List.length(targets)
+    spend_to_all(value_per_person, targets)
+
+  stateful function
+    spend_to_all : ({v : int | v >= 0}, list(address)) => unit
+    spend_to_all(_, []) = ()
+    spend_to_all(value, addr::rest) =
+      require(value < Contract.balance, "spend_to_all: insufficient funds")
+      Chain.spend(addr, value)
+      spend_to_all(value, rest)
+\end{lstlisting}
+
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{a}{b}
+switch(t)
+  (0, x) => x
+  (y, 0) => y
+\end{code}
+

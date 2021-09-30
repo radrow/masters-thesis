@@ -1,0 +1,123 @@
+\documentclass[en]{pracamgr}
+
+\usepackage{float}
+\usepackage{xpatch}
+\usepackage{listings}
+\usepackage{minted}
+\usepackage{tikz-cd}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{epigraph}
+\usepackage{amsfonts}
+\usepackage{ragged2e}
+\usepackage{graphicx}
+\usepackage{adjustbox}
+\usepackage{breakcites}
+
+\input{customs.tex}
+
+\autor{Radosław Jan Rowicki}{386088}
+
+\title{Liquid types for verification of smart contracts}
+\titlepl{Weryfikacja inteligentnych kontraktów przy pomocy logicznie
+  kwalifikowanych typów danych}
+\kierunek{Computer Science}
+
+\opiekun{PhD. Ulf Norell\\
+  University of Gothenburg\\
+}
+\opiekunuw{PhD. Marcin Benke\\
+  University of Warsaw\\
+}
+
+\date{September 2021}
+
+%Podać dziedzinę wg klasyfikacji Socrates-Erasmus:
+\dziedzina{
+  11.3 Informatics
+}
+
+\klasyfikacja{
+  D Software\\
+  D.1 Programming Techniques\\
+  D.1.1 Functional Programming\\
+  D.3 Programming Languages\\
+  D.3.3 Language Constructs and Features\\
+  F Theory of Computation\\
+  F.3 Logics and Meanings of Programs\\
+  F.3.2 Specifying and Verifying and Reasoning about Programs }
+
+\keywords{liquid types, smart contracts, formal verification, dependent types,
+  functional programming, blockchain}
+
+\newtheorem{defi}{Definition}[section]
+
+\AtBeginDocument{%
+  \providecommand\BibTeX{{%
+    \normalfont B\kern-0.5em{\scshape i\kern-0.25em b}\kern-0.8em\TeX}}}
+
+\begin{document}
+
+\maketitle
+
+\center \subsection*{Acknowledgements}
+
+\justify First of all, I would like to thank my supervisor, Ulf Norell, for
+supporting me during my work by inspiring me with ideas, giving numerous
+valuable comments, and discussing various solutions. I am also grateful for our
+cooperation in developing the compiler of Sophia, during which I learned a lot
+about implementing programming languages. Next, I appreciate the support from
+Marcin Benke representing the University of Warsaw, who coordinated the formal
+side of my thesis. Furthermore, I am thankful for what he taught me about type
+systems and semantics of functional languages.
+
+\justify This work has been a subject of the 0135 grant of the Aeternity Crypto
+Foundation ``Logic Qualified Data Types for Sophia''. I hereby thank Lydia
+Atanassova representing the Foundation for her assistance regarding the grant
+application. I would also like to thank all my colleagues from the {\ae}ternity
+Core--Dev team for being exceptionally inspiring professionals, with whom it was
+a big pleasure to work.
+
+\justify Last but not least, I would like to thank my girlfriend, Karolina
+Tudelska, for her moral support and for providing me with priceless advice on
+writing texts in English.
+
+\begin{abstract}
+  In recent years smart contracts have been developed within the blockchain
+  technology as a trustless tool for managing digital assets, many of which are
+  of considerable value. Due to the nature of blockchains, smart contracts are
+  vulnerable to bugs, because once deployed, they cannot be fixed. This can have
+  wide-ranging financial consequences, as cryptocurrencies and NFTs rapidly gain
+  popularity. Therefore, a great need for meticulous audits emerges, so the
+  vulnerabilities can be found and mitigated before they cause harm.
+
+  This work presents liquid types as a method of computer-aided verification of
+  smart contracts. The analysed implementation named Hagia is an extension of
+  the type system of the Sophia language, which has been designed for smart
+  contract development on the {\ae}ternity blockchain. Liquid types have already
+  found application in many projects written in functional languages such as
+  OCaml or Haskell. The presented algorithms and discussions provide a framework
+  for understanding the key concepts of the liquid inference, use cases and the
+  benefits of the proposed solution in the context of smart contract
+  development.
+\end{abstract}
+
+\tableofcontents
+
+\input{chapters/introduction.tex}
+\input{chapters/sophia.tex}
+\input{chapters/liquid_types.tex}
+\input{chapters/implementation.tex}
+\input{chapters/outcome.tex}
+\input{chapters/discussion.tex}
+\input{chapters/conclusions.tex}
+
+\appendix
+\input{chapters/appendix.tex}
+
+\listoffigures
+% \listoftables
+
+\bibliographystyle{acm} \bibliography{bibliography}
+\end{document}

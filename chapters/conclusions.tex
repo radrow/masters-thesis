@@ -1,0 +1,24 @@
+\chapter{Conclusions}
+
+Liquid types have shown to be a valuable extension to the type system of Sophia.
+The automated inference of facts makes them an exceptionally convenient
+verification tool, as they require a little additional effort from the
+programmer. More than that, the modifications of the code they enforce are often
+needed anyway --- for example data validation in entrypoints is a mandatory part
+regardless of the liquid types\footnote{On the other hand, the qualifications
+  could be used to autogenerate validation of entrypoints implicitly. See the
+  discussion, \autoref{making_use_of_quals}}.
+
+The provided expressiveness is very often enough to catch most common errors. As
+shown in the \autoref{outcome}, restricting integers to fit in certain
+boundaries effectively prevents crashes on arithmetics and data queries, while
+putting static checks on balances serves for the token flow control very well.
+The proposed solution for pattern matching greatly helps to find unreachable
+code and to prevent implicit crashing points.
+
+Since liquid types contribute to the syntax, they improve the overall appearance
+of contracts. When a reviewer or a potential client inspects the source, they
+can relate to the assertions provided, making the program more trustworthy, as
+logical qualifications can be utilised to describe many invariants. This not
+only aids the reasoning about the code and helps debugging, but also brings a
+marketing value by incentivising clients to use more verified products.

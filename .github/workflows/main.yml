@@ -1,0 +1,19 @@
+name: Build
+on: [push]
+jobs:
+  build_latex:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup
+        uses: actions/checkout@v2
+      - name: Compile LaTeX document
+        uses: xu-cheng/latex-action@v2
+        with:
+          root_file: thesis.tex
+          extra_system_packages: "py-pygments"
+          latexmk_shell_escape: true
+      - name: Deploy   
+        uses: actions/upload-artifact@v2
+        with:
+          name: thesis
+          path: thesis.pdf

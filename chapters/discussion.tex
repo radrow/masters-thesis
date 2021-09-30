@@ -1,0 +1,297 @@
+\chapter{Discussion}
+
+\section{Future work}
+
+The implementation of liquid types for Sophia has not been entirely finished
+yet. There are still some features of the language that are not covered or could
+have been handled more appropriately. Aside from that, there is a range of
+possible improvements that could enhance the performance and general
+functionality of the refiner. This section provides a selection of problems and
+ideas that may be addressed during future works on Hagia.
+
+\subsection{Missing subtyping between empty product types}
+\label{empty_tuples}
+
+One of the yet unsolved issues is that empty product types can be described in
+various ways, such that none of them is treated as equivalent to any of the
+others. This happens when false qualifications are attached to different
+projections, for example when $t_1 = \texttt{int} \times \{\nu : \texttt{int} |
+\bot\}$ and $t_2 = \{\nu : \texttt{int} | \bot\} \times \texttt{int}$.
+Practically, $t_1$ and $t_2$ are the same (empty), but this will not be solved
+by Hagia due to constraint splitting which reduces $t_1 <: t_2$ to $\{\nu :
+\texttt{int} | \bot\} <: \texttt{int}$ and $\texttt{int} <: \{\nu : \texttt{int}
+| \bot\}$. The second subtyping does not hold, making the whole check fail.
+
+A solution for that would be not spliting product types at all (including
+domains of higher-arity functions) and validating product subtypes as a whole
+instead. That would work, because if a false projection is assumed, then
+regardless of its index every subtyping holds. Moreover, this approach
+cooperates well with the liquid products proposed in the
+\autoref{dependent_products}, as it considers mutual dependencies.
+
+\subsection{Missing subtyping between effectively same variant types}
+\label{effective_variant_types}
+
+It happens that two variants with same sets of inhabitants are not treated as
+equivalent, but instead there is a one-way subtyping relation between them. It
+occurs when one type has a banished constructor and the other has it allowed,
+but it cannot be used due to unsatisfiable qualifications of the parameters. For
+example, the following relation holds:
+
+$$\{\texttt{option(int)} <: \texttt{None}\} <: \{\texttt{option(int)} <:
+\texttt{None} | \texttt{Some}(\{\nu : \texttt{int} | \bot\})\}$$
+
+Unfortunately it does not work the other way around, despite the fact
+that both types actually describe the same space of values, which in this case
+is just a single \texttt{None}. The cause of this issue is that tag predicates
+are entirely detached from the context of constructors' arguments, and the
+system does not see that it is actually impossible to create a value of the
+second type using \texttt{Some} constructor. Thus, after splitting the reversed
+case, the refiner fails to satisfy the tag predicate constraint
+
+$$\Gamma^* \vdash\{\nu : \texttt{option(int)} | \top\} <: \{\nu :
+\texttt{option(int)} | \lnot(\exists x. \nu = \texttt{Some}(\_))\}$$
+
+A possible solution for that would be to enhance tag predicates with additional
+information about the parameters, so the refiner shall infer that \texttt{Some}
+is excluded from the domains of both types. However, if the problem introduced
+in the \autoref{empty_tuples} is addressed, a better way to do it emerges. Since
+after the fix all projections are tied, tag predicates could be replaced with
+dummy arguments of the constructors. They would be of liquid \texttt{unit} type
+with a qualification stating whether the respective constructor is triggered.
+More than that, after implementing liquid products from the
+\autoref{dependent_products} it would be possible to assert that only one
+constructor can be used to build a single value. Going back to the previous
+example, the subtyping would be rewritten to
+
+\begin{align*}
+  & \{\texttt{option(int)} <: \texttt{None}(\{\texttt{is\_none} : \texttt{unit} | \rho_1\}) | \texttt{Some}(\{\texttt{is\_some} : \texttt{unit} | \bot\}, \texttt{int})\} <:\\
+  & \{\texttt{option(int)} <: \texttt{None}(\{\texttt{is\_none} : \texttt{unit} | \rho_2\}) | \texttt{Some}(\{\texttt{is\_some} : \texttt{unit} | \rho_3\}, \{\nu : \texttt{int} | \bot\})\}
+\end{align*}
+
+where each $\rho_i$ is a liquid template. Note that in this setup it is no longer
+needed to falsify parameters of banished constructors, because they are
+considered in contradictory contexts anyway. With that setup, the subtyping
+should work in both directions as expected.
+
+\subsection{Incremental solving}
+
+Z3 builds the solving environment incrementally. That means it keeps its state
+between queries, which is reused for handling the subsequent assertions. If
+properly utilised, it can have a great impact on the performance. One of the
+ways of interacting with this feature are the \texttt{push} and \texttt{pop}
+instructions, which allow making snapshots of the current state and returning to
+it afterwards.
+
+Currently, Hagia makes little use of it; for instance, it always cleans up the
+whole context and redefines the solving enviroment from scratch with every
+constraint. This behaviour could be changed to respect the dependencies between
+environments. Except from some initial cases, almost every constraint is created
+in an environment that is a direct extension of another one, which could be
+reflected in the interaction with the solver.
+
+One way to realise it is to build up a tree structure where the constraints are
+stored in the nodes and vertices describe updates of the environments. The
+iterative weakening then traverses through the graph, sending new assertions to
+the solver while moving to each child node. When returning to the parent, the
+\texttt{pop} instruction is called to revert Z3 to a respective state.
+
+For example, considering a simple function involving an \texttt{if} expression:
+
+\begin{lstlisting}[language=sophia]
+function trim_neg(a : int) : {res : int | res >= 0} =
+  let b = a > 0
+  if(b) a else 0
+\end{lstlisting}
+
+The following set of constraints is generated (simplified for readability):
+
+\begin{align*}
+  & \Gamma^*_t \vdash \{\nu : \texttt{int} | \nu = a\} <: \{\nu : \texttt{int} | \nu
+    \geq 0\}\\
+  & \Gamma^*_e \vdash \{\nu : \texttt{int} | \nu = 0\} <: \{\nu : \texttt{int} | \nu
+    \geq 0\}
+\end{align*}
+
+where
+
+\begin{align*}
+  & \Gamma^* = a : \texttt{int}, b : \{\nu : bool | \nu = a > 0\}\\
+  & \Gamma^*_t = \Gamma^*, b\\
+  & \Gamma^*_e = \Gamma^*, \lnot b
+\end{align*}
+
+After the optimisation, the following graph is built:
+
+\begin{adjustbox}{margin=0 30 0 30}
+% https://tikzcd.yichuanshen.de/#N4Igdg9gJgpgziAXAbVABwnAlgFyxMJZAJgBpiBdUkANwEMAbAVxiRAB12BxOgW17oA9AFQB9GAAJONKHTgALKe2CcwTCYiU4YADxz7gWMDgC+EgD5K1EgLwSADJzMAeTZxXtrb9tr0GjphZW6pwA5jAAjg5OICak6Ji4+IQo9uRUtIwsbEo8-EJiOEoycoruqurevvo4hsZmlhW2EnROEq5KHl5aujV1gY2eIezhUfZKJrHxIBjYeAREAIykixn0zKyIIFMJc8lLpPZrWZvbJhkwUOEIKKAAZgBOELxIZCA4EEjLmRtsnNUGORwGAPUwACgARgBKEDUBh0CEwBgABUS8xSIAeWFC8hwOxAj2er2oHyQaRA8MRKLR+y2DBgdzx1HW2S2-16gLgwNBJjBnAYkCK0PxhJeiAAzCTPog3izTuy-LV6UUTBDmnQJAA+ByxCgmIA
+\begin{tikzcd}[cramped]
+  & {} \arrow[d, "\texttt{let }b = a > 0"]\\
+  & \Gamma^* \arrow[ld, "\texttt{assert}(b)"'] \arrow[rd, "\texttt{assert}(\lnot b)"] &\\
+  \Gamma^*_t \vdash \{\nu : \texttt{int} | \nu = a\} <: \{\nu : \texttt{int} | \nu
+  \geq 0 \} & & \Gamma^*_e \vdash \{\nu : \texttt{int} | \nu = 0\} <: \{\nu :
+  \texttt{int} | \nu \geq 0\}
+\end{tikzcd}
+\end{adjustbox}
+
+The environment $\Gamma^*$ can now be reused for handling both \texttt{if}
+branches. This prevents many definitions and predicates being defined twice in
+the SMT, which saves a lot of the solving time. The overall complexity of the
+iterative weakening is thus divided by the number of constraints, which shall
+significantly affect the performance.
+
+\subsection{Relationship analysis for the initial assignment}
+
+The proposed solution for the initial assignment is rather naive as it assumes
+relationships between all variables of the same type and combines them with all
+possible operations to cover as many cases as possible. A similar strategy is
+applied to the integer literals, which are picked very arbitrarly. It results in
+many irrelevant or otherwise absurd qualifiers, leaving a quadratic number of
+statements to be examined. Not only does it affect the memory, but more
+importantly it reduces the performance of the iterative weakening.
+
+Some analysis to make this process more sensible could be performed. For
+instance, a newly introduced variable could relate only to the variables that
+contributed to its definition. Similar heuristics could be applied to integers.
+
+\subsection{Parallelisation}
+
+Erlang is mostly known for its efficient parallelism through \emph{processes}.
+Making use of them could bring a big improvement to the performance. A good
+place to start is the AST preprocessing and constraint generation procedures,
+because they work only with either read-only or append-only data.
+
+More importantly, the iterative weakening, which is the most computationally
+intensive part, can also take advantage of it. Independent processes could
+weaken the constraints separately by removing the conflicting qualifiers on
+their own and apply the changes to the assignment after each iteration. The
+parallelism does not break the correctness of the algorithm --- processing more
+constraints in a single round does not limit the progress in any way.
+
+This optimisation requires a proper synchronisation. One of the strategies is to
+equip all the wobbly qualifiers with indices, so they can be reported by the
+working processes and removed by the supervisor after each iteration. This
+requires altering the underlying representation of the assignments to use
+\texttt{maps}, \texttt{proplists} or some other indexed data collection for
+representation of the predicates.
+
+The proposed strategy has not been tested, nor has any attempt of implementing
+it been done in this project. Moreover, it might be challenging to combine it
+with incremental solving. Although there are no guarantees, the idea is
+promising and should be considered during the further development.
+
+\subsection{Liquid types for termination checking}
+
+Since the theory is capable of making judgements about values, it is able to
+identify some cases of non-terminating function. With the size-change measure
+\cite{10.1145/373243.360210, Sereni05terminationanalysis} method, some
+additional subtyping contraints could be generated to ensure the convergence.
+This idea has been already implemented in LiquidHaskell
+\cite{vazou2014refinement} --- a refinement type checker for Haskell.
+
+The size measure is trivially definable for most Sophia types, especially the
+inductive ones. Integers could be cast to their absolute values or limited to
+natural numbers with logical qualifications. This gives an idea for a slick
+implementation of a simple totality checker, which could prevent some infinite
+recursions and allow more flexibility in defining custom refinements.
+
+\subsection{Liquid products with mutual dependencies}
+\label{dependent_products}
+
+In product types (such as tuples, records and some cases of variants) the
+projections cannot be declared to depend on each other. Fixing it would
+considerably increase the flexibility of qualifications on complex data. This,
+for instance, would allow creating a type for well-formed integer ranges,
+defined as tuples $(n, m) : int \times int$, where $n \leq m$. Another use-case
+is keeping some additional information about the data, like a tuple of a list
+and an integer describing its length for a constant-time access. It is worth
+noting that higher-arity functions may benefit from that in a similar manner ---
+in that case a linear dependency can be now achieved via currying, however.
+
+\subsection{Making use of the qualifications during byte code generation}
+\label{making_use_of_quals}
+
+Liquid typing provides information that can be taken into account during the
+final compilation phases. For instance, if a variable has been proven to contain
+a fixed value, it can be safely inlined. Another example could be a situation
+where it is clear which constructor has been used to create the value under a
+given variant variable. This could reduce the number of unnecessary checks and
+thus save gas.
+
+Furthermore, the qualifications on contravariant types of entrypoints do not
+need to be disallowed. Since they are valid Sophia expressions, they can be used
+for automated generation of data validation. The downside of this is the lesser
+transparency --- implicit behaviours might not look right to some programmers.
+An option worth considering is to make it adjustable by the user with a flag or
+some other configuration method.
+
+\section{Alternative approaches}
+
+While liquid types are a reliable way of dealing with the common issues of smart
+contracts, there are some alternatives that appear promising as well. Static
+verification of programs is a broad field of computer science, so the presented
+solutions are only a selection of what can be taken into account.
+
+\subsection{Dependent type theory}
+
+As stated before, the proposed system can be seen as a simplified version of
+Martin-Löf's dependent type theory. Utilisation of full-featured dependent types
+in Sophia would drastically increase the range of expressable properties, as it
+has little to no limitations on the qualifications being used and allows
+building very arbitrary data types. For instance, one could wrap the type of
+some expression with \texttt{option}, but only if the computation has a chance
+to fail due to the valuation of the variables in the context. This is
+inexpressible with liquid types, as it requires having a variable base type.
+
+On the other hand there are some drawbacks that one needs to consider. First,
+this theory is much more complex than liquid types. Since types can be results
+of arbitrary computations, the type inference might become very hard, if not
+undecidable, in some cases. Consequently, the programmer may be forced to
+provide proofs for declared theorems on their own. Not only does this work tend
+to be very tedious, but it also often requires a deep understanding of the
+underlying theory.
+
+Next thing is that with this theory it is not possible to rely on an SMT solver
+entirely. The reason for it is that dependent types do not depend solely on
+logical formulations, but rather on arbitrary data. Therefore, the system would
+need to interpret the code on its own, which would have a negative impact on the
+performance.
+
+Needless to say, one must keep in mind that this field of computer science is
+developing very dynamically and is attracting more interest over time. There
+already exist some mature implementations of dependent types such as Coq
+\cite{10.5555/993954}, Agda \cite{agda} and Idris \cite{idris}. The former is
+mostly focused on theorem proving and has already found its application in smart
+contract development \cite{10.1145/3437992.3439934}. The other two are
+general-purpose programming languages, which makes them very promising for that
+as well.
+
+\subsection{Contract checking}
+
+Contract\footnote{In that theory the term ``contract'' has a different meaning
+  and is not related to smart contracts.} checking \cite{Bruce_contractsfor} is
+yet another approach to the automated verification. This theory puts more focus
+on expressions than types, but the purpose is rather similar to liquid types and
+both solutions have comparable expressiveness. For a bigger picture, there is a
+master's thesis \cite{wojciechbaranowski2014} that provides a detailed
+comparison between Haskell Contracts Checker \cite{10.1145/2480359.2429121} and
+LiquidHaskell \cite{vazou2014refinement}.
+
+\subsection{Property-based testing}
+
+Property-based testing stays somewhere in the middle between unit testing and
+automated theorem proving. The idea is to let the programmer express some
+logical properties of functions and values, which serve then as a base for
+automatic test generation aiming to find counter-examples for the given
+assumptions. One of the most famous implementations is QuickCheck
+\cite{10.1145/357766.351266} which was originally created for verification of
+Haskell programs, and has inspired similar tools (usually of the same name) for
+many other programming languages.
+
+The approach is very different though. Most importantly, tests do not guarantee
+that the given assumptions necessarily hold, in contrast to the already shown
+solutions. On the other hand, they are much easier to manage by the programmer;
+they do not require actual derivation of proofs, which in many cases provides
+enough security at lower cost of maintenance. Because of that difference, it is
+worth considering using both automated testing and a strong type system
+simultanously, as they do not conflict with each other.

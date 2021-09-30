@@ -1,0 +1,389 @@
+\chapter{The Sophia language}
+\label{chapter_sophia}
+
+\section{Language overview}
+
+Sophia is a domain-specific language that targets smart contracts on the
+{\ae}ternity blockchain. It belongs to the ML family being a statically and
+strongly typed functional language supporting parametric polymorphism with fully
+developed type inference. It was created in 2017 by Ulf Norell, Hans Svensson,
+Erik Stenman and Tobias Lindahl as a part of the {\ae}ternity core node, and was
+later separated as a stand-alone tool equipped with a command line interface, an
+HTTP service and an interactive REPL. For a first look at the syntax, an example
+of a Sophia contract that serves as a factorial calculator is presented in
+\autoref{example_factorial}.
+
+\begin{code}[!hbt]{lexers/sophia.py:SophiaLexer -x}{Factorial contract}{example_factorial}
+contract Fac =
+  entrypoint
+    factorial : int => int
+    factorial(n) =
+      if(n == 0) 1
+      elif(n > 0) n * factorial(n - 1)
+      else 0
+\end{code}
+
+One of the key reasons for making it functional is the belief that this paradigm
+provides decent security against common bugs \cite{Hughes89whyfunctional}. The
+strict type system catches many domain-related errors and referential
+transparency\footnote{Technically speaking, Sophia is not entirely referential
+  transparent due to some impure constructions which shall be discussed later
+  on.} simplifies reasoning about blocks of code, allowing the reader to analyse
+it without having to mind the context of the global variables. Moreover, the
+reactive style of programming weaves in the transaction-driven nature of
+blockchains exceptionally well.
+
+The language is designed for the blockchain interaction. Among others, it
+provides instructions for checking the number of tokens transferred with the
+current call, the entity that performed or originated\footnote{The difference
+  between these two emerges when a contract is calling another contract. The
+  \emph{caller} is the direct entity that initiated the call, while the
+  \emph{origin} is the peer who published the call transaction.} the call,
+balance of any address (including own) and performing spend transactions. There
+is also a rich library of cryptographic functions, data structure algorithms and
+functional combinators \cite{sophia_stdlib}.
+
+Despite being a declarative language, Sophia does offer a limited control over a
+mutable state. The programmer is allowed to define a special type \texttt{state}
+and is given a control over a single variable of it which can be freely modified
+across the execution. There is a dedicated entrypoint \texttt{init} which is
+called only once during the contract initialisation and sets up the initial
+state. The state persists between calls and is the main way of storing
+information on the chain by smart contracts.
+
+Sophia divides functions by three categories: statefulness, payability and
+exposure to the outer world:
+
+\begin{itemize}
+\item For a function to be allowed to directly or indirectly modify state of the
+  contract\footnote{That includes not only the \texttt{state} variable, but also
+    the balance.}, it must be declared with the \texttt{stateful} keyword. This
+  restriction effectively brings back the benefits of immutability and purity.
+  Non-stateful functions can read the state freely, though.
+\item A function that is \texttt{payable} is allowed to be called along with a
+  token transfer to the contract. Making it explicit can prevent accidental
+  spends by calling an entrypoint that is not prepared to handle the income
+  properly.
+\item As for exposure, functions that are supposed to be called from the outside
+  (that is, by users or other contracts) have to be declared as
+  \texttt{entrypoint}s instead of \texttt{function}s. This requirement allows
+  keeping internal algorithms safe from unwanted calls, which could be dangerous
+  considering the fact that they might operate on some intermediate state with a
+  malformed structure.
+\end{itemize}
+
+For an example of a stateful contract please refer to the
+\autoref{example_factorial_stateful} which presents a factorial calculator that
+additionally counts and stores the number of its uses.
+
+\begin{code}[htb]{lexers/sophia.py:SophiaLexer -x}{Counting factorial contract}{example_factorial_stateful}
+contract Fac =
+  type state = int
+  entrypoint init() = 0
+
+  stateful entrypoint fac(n) =
+    require(n >= 0, "INVALID_ARG")
+    put(state + 1)
+    fac_internal(n, 1)
+
+  function fac_internal(n, acc) =
+    if(n == 0) acc
+    else fac(n - 1, acc * n)
+
+  entrypoint get_uses() = state
+\end{code}
+
+This document describes the 5.0.0 version of Sophia. However, at the time of
+writing 6.0.2 is released featuring introspection of other contracts' byte code
+and dynamic creation of new contracts. Although the presented type refinement
+system does work well with the recent version, the new functionalities are not
+taken into account.
+
+\section{Syntax}
+
+The structure of a Sophia program is split into three layers:
+
+\subsubsection{Top level}
+
+This is the root of a Sophia file. It contains directives for the compiler,
+\texttt{include} statements, namespaces, contract interfaces and the main
+contract definition. The last one is the actual body of the entity to be
+deployed onto the blockchain. Namespaces aid the hermetisation and help keeping
+tidy structure by dividing logic into separate modules. Contract interfaces
+contain only entrypoint signatures and possibly type definitions which are
+required for the cross-contract interaction. A valid Sophia program requires
+exactly one contract definition and any number of contract declarations and
+namespaces above it. At this level, the entities are processed top-down making
+mutual recursion impossible.
+
+The syntax of the top level can be visualised as presented in the
+\autoref{top_level_syntax_example} (please refer to the
+\autoref{full_sophia_syntax} for the full BNF grammar).
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Top level syntax example}{top_level_syntax_example}
+// Compiler version pragmas
+@compiler >= 5.0.0
+@compiler < 6.0.0
+
+// External file loading
+include "List.aes"
+
+// Namespace
+namespace Lib =
+  /* [Contract level] */
+
+// Contract definition
+contract Main =
+  /* [Contract level] */
+\end{code}
+
+
+\subsubsection{Contract level}
+
+This is the place where the definitions of functions and custom data types are
+written. This time, the entities are processed in a way that allows mutual
+recursion for functions, but not for data types. In case of contracts, functions
+are divided into \texttt{entrypoint}s (public) and \texttt{function}s (private),
+and for namespaces there are respectively \texttt{function}s and \texttt{private
+  function}s. As stated before, each of these can be additionally equipped with
+\texttt{payable} and \texttt{stateful} annotations.
+
+Example syntax on this level is presented in the
+\autoref{contract_level_syntax_example}.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Contract level syntax
+    example}{contract_level_syntax_example}
+// Type alias
+type i = int
+
+// Record
+record point = {x : i, y : i}
+
+// Variant type (ADT)
+datatype closed_int = NegInf | Int(i) | PosInf
+
+// Single-clause function definition
+function f(x) =
+  /* [Function level] */
+
+// Multi-clause function definition
+function g : int => int  // Type declaration is optional
+         g(0) = /* [Function level] */
+         g(n) = /* [Function level] */
+
+// Stateful function. Only in contracts.
+stateful function h(x : int) : int * int = // Returns a tuple of two ints
+  /* [Function level] */
+
+// Stateful payable entrypoint. Only in contracts.
+stateful payable entrypoint q() : unit = // Zero-tuple is referred as unit
+  /* [Function level] */
+
+// Private function. Only in namespaces.
+private function w() : closed_int =
+  /* [Function level] */
+
+// Entrypoint declaration. Only in contract interfaces.
+entrypoint e : (int, bool, string) => option(int * bool * string)
+\end{code}
+
+\subsubsection{Function level}
+
+At the function level the actual algorithms are defined. The syntax is mostly
+compatible with the Standard Meta-Language with some minor differences in the
+blocks' layout, lambda definitions and imperative constructions. The most
+notable change is the support for higher arity functions, which is normally
+achieved with tuples or currying in other languages from the ML family.
+
+\autoref{function_level_syntax_example} shows a selection of statements and
+expressions that may appear here.
+
+\begin{code}[H]{lexers/sophia.py:SophiaLexer -x}{Function level syntax
+    example}{function_level_syntax_example}
+require(state.size < 0, "STATE TOO LOW") // Data validation
+let x = 10
+let sqr(n) = n * n
+if(state.size > x)
+  abort("STATE TOO BIG") // Throwing an error
+else
+  let payload : list(int) = state.payload
+  switch(payload)
+    []   => 0
+    h::t =>
+      h * List.sum([a + 1 | a <- t]) // List comprehension
+\end{code}
+
+
+\autoref{example_contract_full} provides an example of a complete and compilable
+contract presenting the most prominent features of the language. It shows a full
+program structure, interaction with other contracts and some mock data
+validation. Again, for the full reference please consult the appendix.
+
+\begin{code}[!hb]{lexers/sophia.py:SophiaLexer -x}{A more complex Sophia contract example}{example_contract_full}
+include "List.aes"
+
+contract IntegerService =
+  entrypoint retrieveInts : () => list(int)
+
+namespace Validation =
+  function validate(x : int) : bool =
+    if(x >= 0)
+      factorial(x) mod 2 == 0
+    else false
+
+  private function factorial(x) =
+    switch(x)
+      0 => 1
+      _ => x * factorial(x - 1)
+
+contract Main =
+  type state = list(IntegerService)
+  entrypoint init() = []
+
+  stateful entrypoint register(service : IntegerService) : unit =
+    require(List.all(Validation.validate, service.retrieveInts()),
+            "INVALID_SERVICE")
+    put(service::state)
+
+  payable entrypoint get() =
+    require(Call.value > 0, "FEE_REQUIRED")
+    state
+\end{code}
+
+\section{Type system}
+
+The type system of Sophia is a super-set of the Hindley--Milner's \cite{hindley,
+  milner}. It offers first-rank parametric polymorphism, higher order functions
+and full type inference. One of the limitations is that Sophia requires all
+local variable definitions to be monomorphic and not recursive, meaning that in
+some situations auxiliary functions must be extracted up to the contract level.
+
+Sophia supports other contracts as first-class values, meaning that they can be
+handled as ordinary data. For instance, in the \autoref{example_contract_full}
+the main contract stores a list of references to other contracts that are
+supposed to implement the \texttt{IntegerService} interface. Verification if
+that is actually the case is an obligation of the user, since FATE does not type
+check external contracts entirely, but only calls to their entrypoints.
+
+The programmer is given an ability to describe custom data types in a manner
+similar to other ML-like languages, like OCaml \cite{ocaml} or Elm
+\cite{elm2013}. There are three alternatives for it:
+
+\begin{enumerate}
+\item Type alias --- created with the \texttt{type} keyword. It provides a
+  different name for an existing type and can always be inlined without
+  breaking the semantics.
+\item Record --- created with the \texttt{record} keyword. This construction is
+  also known as \emph{named tuple} or \emph{struct} in other programming
+  languages. It is a data structure that consists of other data under named
+  positions called \emph{fields}.
+\item Variant --- created with the \texttt{datatype} keyword. Formally it is a
+  non-generalised algebraic data type, and allows forming disjoint unions and
+  products of other types using named constructors. It is heavily inspired by
+  many modern programming languages like Haskell, OCaml and Rust.
+\end{enumerate}
+
+In contrary to the referred languages, Sophia does not support recursive type
+definitions, making some constructions like trees inexpressible. However, there
+is a built-in inductive \texttt{list} data type, which follows the common for
+functional languages convention of being either an empty list \texttt{[]} or a
+construction \texttt{head::tail} where \texttt{head} the first element and
+\texttt{tail} is the list of the rest.
+
+The lack of tree-like structures is partially mitigated by the built-in
+\texttt{map} data type. Since trees are frequently used to implement data
+collections, hash tables serve more often than not well enough for their use
+case. The values are flexible to be of any types, while keys are limited not to
+be other maps, functions and polymorphic variables.
+
+The types can be parameterised with other types. This is very useful for
+generalising various patterns and providing more meaningful names for some
+complex domains. The parameters must not accept further parameters, making
+higher-kinded types disallowed in Sophia.
+
+\section{Potential issues}
+
+Despite being very defensive and restrictive, Sophia is not capable of checking
+several important varieties of assumptions. Among others, there is no way to
+statically verify properties of values within the provided types, such as
+integer boundaries. This can be a significant issue with contracts that manage
+and store tokens. While one can be sure that a variable representing the balance
+of some address is an integer, the compiler shall not guarantee that its value
+is always non-negative. Overseeing such assumptions can expose contracts to
+exploitation and in the worst case tokens theft.
+
+Because of that, entrypoints require explicit validation of the incoming data.
+The type checker does not have information about the expectations regarding it,
+so it will not remind the user about the need of checking them. This becomes an
+issue when domains are restricted with additional assumptions, what happens for
+example in the standard library for rational numbers, which represents fractions
+using only positive integers. The library does not check if the input data is
+well-formed for performance reasons. Therefore, if the provided utilities are
+used on unverified data coming from outside of the contract, they may latently
+produce invalid results.
+
+It is also worth noting that FATE type checks data during execution only to some
+limited extent. For instance, while it is able to distinguish a list from an
+integer, it will struggle telling a difference between variants if their
+definitions are similar enough. Moreover, record types are non-existent in FATE
+and are reduced to tuples by the compiler. Consequently, if data is compatible
+on the byte code level, it may be coerced to a different Sophia type in an
+unsafe way, leading to an unexpected interpretation of it in the other contract.
+
+This also brings back the previously mentioned problem of data validation. For
+example, let us consider a contract that utilises rational numbers and a variant
+type of a structure similar to the respresentation of fractions. In such a case,
+both types may be mistaken with each other without throwing a runtime error, but
+evaluating invalid computation instead. It is visualised in the
+\autoref{fate_messup}, where the \texttt{ChickenField} contract is called with
+swapped arguments. The real implementation of \texttt{scale\_chicken} will thus
+handle \texttt{InTheAir(-1, 0)} as a malformed fraction representing a negated
+division $-1/0$. This operation \emph{will} succeed, but shall return a
+senseless value. For example if \texttt{spawn\_chicken\_with} is called with
+\texttt{distance} equal to 2, the result will be \texttt{InTheAir(0, 0)} instead
+of the expected \texttt{InTheAir(-5, 0)}. Note that the bug is not only about
+misuse of data, but also creation of malformed structures which silently
+propagate across the runtime.
+
+\begin{code}[hb]{lexers/sophia.py:SophiaLexer -x}{Example of a bug breaking data
+    assumptions}{fate_messup}
+/* file: ChickenField.aes                                                     */
+/* Contract mixing rationals and similarly structured variants                */
+
+// Standard library namespace for rational numbers
+namespace Frac =
+  // A fraction is represented by either zero positive/negative pair of
+  // numerator and denominator
+  datatype frac = Neg(int, int) | Zero | Pos(int, int)
+
+  ...
+
+contract ChickenField =
+  // Datatype describing coordinates of a chicken in several states
+  datatype chicken_location = InTheAir(int, int) | Heaven | Underground(int, int)
+
+  entrypoint scale_chicken(loc : chicken_location, ratio : Frac.frac) =
+    switch(loc)
+      Heaven => Heaven
+      InTheAir(x, y) =>
+        let x1 = Frac.round(Frac.div(Frac.from_int(x), ratio))
+        let y1 = Frac.round(Frac.div(Frac.from_int(y), ratio))
+        InTheAir(x1, y1)
+      Underground(_, _) => Heaven
+
+
+/* file: ChickenCreator.aes                                                   */
+/* Contract misusing the ChickenField contract                                */
+
+// Interface for the ChickenField contract field
+contract ChickenField =
+  datatype chicken_location = InTheAir(int, int) | Heaven | Underground(int, int)
+
+  // Declaration with wrong order of arguments
+  entrypoint scale_chicken : (Frac.frac, chicken_location) => chicken_location
+
+contract ChickenCreator =
+  entrypoint spawn_chicken_with(cf : ChickenField, distance : int) =
+    // Improper call to the ChickenField contract
+    cf.scale_chicken(Frac.from_int(distance), InTheAir(-10, 0))
+\end{code}

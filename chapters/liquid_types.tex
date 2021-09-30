@@ -1,0 +1,253 @@
+\chapter{Liquid types}
+\label{liquid_types}
+
+\epigraph{The purpose of a programming language is to make it easier to
+  express the things that do make sense while making it harder or impossible to
+  express things that do not make sense.}{Ulf Norell}
+
+\section{Motivation}
+
+Smart contracts are gaining more and more popularity these days and are being
+used to manipulate assets, whose total value exceeds many other digital
+entities. With the increasing importance comes increased demand on the quality
+and security. Due to this trend and the limitations of human perception, there
+comes a need of using computers to accomplish these necessities.
+
+Static semantics have been used successfully in keeping programs safe in terms
+of the execution stability and following the intentions of the programmer
+\cite{Lagouvardos:2020:PSM, Coblenz:2020:OTA,8445052,Feist_2019}. On the other
+hand there is a trade-off between safety and coding flexibility. One of the most
+common arguments against strict static checks is that they require producing a
+lot of redundant code at little benefit in return, slowing down the development.
+
+While this discussion may be very heated for certain fields of computer science,
+the blockchain topic is a very specific case. As said before, smart contracts
+are very vulnerable to bugs for the reason of being impossible to fix after
+they are deployed. This effectively shifts the priorities towards having
+more reliable code in the very first place, at the possible costs of slower
+development. Indeed, losses caused by an error in a contract managing tokens
+worth millions of dollars can be much more expensive than months of work
+invested in the verification and testing.
+
+There was research on the causes of the most common bugs in smart contracts in
+the Ethereum network \cite{groce2020actual}. According to it, over 45\% of bugs
+made in significant smart contracts have been in fact consequences of either
+improper (or non-existent) data validation or holes in the access control. About
+a fourth of those are marked as ``highly severe'', over a half of which are
+found to be ``easy to exploit''. More generally, these issues involve relying on
+assumptions that do not actually hold. Therefore, it is worth trying to look for
+a way of making these assumptions more explicit and forcing the programmer to
+take care of them according to the declared or inferred requirements.
+
+In this chapter \emph{liquid types} are introduced as a remedy for the most
+common problems of smart contracts. The aim is to enhance the existing type
+system of Sophia with a dedicated context-dependent verification engine that
+shall relate not only to the overall domains of data, but also express more
+arbitrary logical predicates over it. That means the programmer shall be able to
+put assumptions on the values of certain variables by attaching boolean expressions
+to their types. More than that, the system shall automatically verify if the
+requested properties hold, and provide its own assertions on the internal
+functions provided by the language.
+
+\section{History and overview}
+
+The concept of liquid types comes from a broader term of \emph{refinement types}
+which was introduced in 1991 by Tim Freeman \cite{Freeman91refinementtypes}. The
+original idea defines a refined type as a base type enhanced with a predicate
+that must hold for every inhabiting value. For example, a type of positive
+integers can be described as $\{\nu : int | \nu > 0\}$ which is read as ``a type
+of such integers $\nu$, that $\nu > 0$''. This allows putting more precise
+restrictions on values and thus gives more flexibility in making invalid states
+irrepresentable.
+
+The name ``liquid type'' is an abbreviation for ``logically qualified data
+type'' and originates in a 2008 paper by Patrick Rondon \cite{liquid} which
+later became a part of his doctoral dissertation \cite{liquid_phd}. Liquid types
+are a special case of a refined type system along with an inference algorithm.
+That work serves as the main inspiration for this research, and the
+implementation of Hagia is strictly based on the algorithms presented there.
+From now on, the terms ``liquid type'' and ``refined type'' shall be used
+interchangeably.
+
+\section{Definition}
+\label{liquid_types_definition}
+
+Let $\Gamma$ denote the environment from the standard Hindley-Milner type
+inference algorithm \cite{hindley, milner}. For the purpose of inference of
+liquid types the \emph{liquid type environment} $\Gamma^*$ is introduced. The
+difference between these two is that in $\Gamma^*$ each variable has assigned a
+liquid type instead of a base type, and it keeps an additional \emph{path
+  predicate} which is a conjunction of boolean expressions describing
+assumptions derived from the context.
+
+The following two definitions are reformulations of those from Rondon's paper,
+being slightly adjusted to match the types in Sophia.
+
+\begin{defi}
+  A \underline{liquid type} is a dependent type that consists of
+  \begin{itemize}
+  \item A \underline{base type} $\mathbb{B}$
+  \item A \underline{value handle} $\nu : \mathbb{B}$
+  \item A \underline{predicate} $\mathbb{P}$ which is a conjunction of boolean
+    expressions called \underline{qualifiers}
+  \end{itemize}
+  An expression $e$ has type $\{\nu : \mathbb{B} | \mathbb{P}\}$ in the liquid
+  environment $\Gamma^*$ when $\Gamma \vdash e : \mathbb{B}$ and
+  $\mathbb{P}[\nu/e]$ holds in $\Gamma^*$.
+\end{defi}
+
+Additionally, there is a restriction on $\mathbb{B}$ to be simple enough to let
+$\mathbb{P}$ express reasonable properties of it. In Hagia it is limited to be
+representable by either a primitive base type, such as \texttt{int} or
+\texttt{bool}, or a type variable. Handling complex types, such as lists or
+records, is described below.
+
+\begin{defi}
+  A \underline{liquid function type} consists of
+  \begin{itemize}
+  \item A list of \underline{liquid arguments} of form $\{x : \mathbb{T}\}$
+    where $x$ is a variable and $\mathbb{T}$ is a liquid type
+  \item A \underline{return type} $r$ where $r$ is a liquid type defined in an
+    environment extended with assumptions derived from the arguments
+  \end{itemize}
+  It describes a function type, return type of which depends on the values of
+  the arguments it has been applied to. In this notation, a liquid argument $\{x
+  : \{x : \tau | \rho\}\}$ can be abbreviated to $\{x : \tau | \rho\}$. In the
+  current implementation, arguments cannot depend on each other. See the
+  \autoref{dependent_products} for the discussion.
+\end{defi}
+
+The presented types can be seen as a subset of $\Sigma$ and $\Pi$ types
+respectively from the Martin--Löf dependent type theory
+\cite{Martin-Loef_anintuitionistic}. The main difference are the restrictions on
+their right-hand side, as liquid types allow a much tighter space of expressions
+to be put there. For instance, a proper $\Pi$ type may perform a conditional
+check on its argument and arbitrarily determine the return type according to it,
+which the liquid functions considered here are not capable of.
+
+Since Sophia is more complex than the simplified ML analysed in Rondon's work,
+the following additional constructions are introduced:
+
+\begin{defi}
+  A \underline{liquid list type} consists of
+  \begin{itemize}
+  \item An \underline{element type} $\mathbb{T}$
+  \item A \underline{length value handle} $\nu : \texttt{int}$
+  \item A \underline{length predicate} $\mathbb{P}$ which is a conjunction of
+    boolean expressions
+  \end{itemize}
+  The list $l$ is of type $\{\nu : \texttt{list}(\tau) | \mathbb{P}\}$ in
+  $\Gamma^*$ when all of its elements are of type $\tau$ in $\Gamma^*$ and
+  $\Gamma^* \vdash \mathbb{P}[\nu/\texttt{length}(l)]$
+\end{defi}
+
+In Hagia liquid lists may be referred as if they were integers. In such a case
+they shall be cast to their lengths. For instance, the type $\{x : \texttt{int} |
+  x > [2,1,3,7]\}$ can be interpreted as $\{x : \texttt{int} | x > 4\}$.
+
+\begin{defi}
+  A \underline{liquid record type} consists of
+  \begin{itemize}
+  \item A \underline{base type} $\mathbb{B}$ which is an identifier of a Sophia
+    record type
+  \item A list of \underline{liquid fields} of form $f : \mathbb{T}$ where
+    $f$ is the name of a field of the record $\mathbb{B}$ and the base type of
+    $\mathbb{T}$ is the type of that field.
+  \end{itemize}
+
+  We conclude that $\Gamma^* \vdash r : \{\mathbb{B} <: f_1 : \tau_1, f_2 :
+  \tau_2\}$ when $\Gamma \vdash r : \mathbb{B}$ and each field $f_i$ has a
+  respective type $\tau_i$ in $\Gamma^*$.
+\end{defi}
+
+
+\begin{defi}
+  A \underline{liquid variant type} consists of
+  \begin{itemize}
+  \item A \underline{base type} $\mathbb{B}$ which is an identifier of a Sophia
+    variant type
+  \item A list of \underline{liquid constructors} of form $C(args)$ where $C$
+    is the name of a constructor of $\mathbb{B}$ and $args$ is a list of liquid
+    types applicable to that constructor.
+  \end{itemize}
+
+  We conclude that $\Gamma^* \vdash x : \{\mathbb{B} <: C_1(a_{1_1}, a_{1_2}) |
+  C_2(a_{2_1}, a_{2_2})\}$ when $\Gamma \vdash x : \mathbb{B}$ and $x$ is
+  defined by any of the constructors $C_i$ applied to respective parameters of
+  types $a_{i_j}$. Note that not all constructors of $\mathbb{B}$ need to appear
+  in the list. If that is the case, the liquid variant type is limited only to
+  the values created with the mentioned constructors.
+\end{defi}
+
+Aside from the above, regular tuple and map constructions are allowed. They
+cannot be equipped with logical qualifiers and disallow mutually dependent
+refinements of the underlying types --- see the \autoref{dependent_products} for
+the discussion.
+
+\section{Syntax}
+
+The type refinement system can work fine without any additional syntax. As long
+as the existing constructions induce logical qualifications automatically, a
+certain amount of safety is already provided. For example, division by zero is
+prevented as the system pre-defines the type for the \texttt{/} operator to be
+$(\{n : \texttt{int}\}, \{d : \texttt{int} | d \neq 0\}) \to \{r : \texttt{int}
+| r = n / d\}$ which enforces the right operand not to be equal to zero
+(\autoref{ssec:constr_expr} explains how it is constructed in more details).
+
+However, giving the programmer the ability of setting their own restrictions
+greatly extends the range of the properties that can be subjects of
+verification. As shown in the \autoref{initial_assignment}, the space of
+inferrable judgements is limited to some pre-defined set of expressions which
+may not always be as precise as needed. An example where this makes a
+significant difference can be found in the \autoref{double_token_storage}.
+Therefore, a new syntax is provided which follows the definitions from the
+\autoref{liquid_types_definition}. For the BNF grammar please refer to the
+appendix, \autoref{liquid_types_syntax}.
+
+\subsubsection{Examples}
+
+\begin{itemize}
+\item A positive integer: \texttt{\{x : int | x > 0\}}.
+\item A non-empty list of odd integers: \texttt{\{l : list(\{e : int | e mod 2
+    == 1\}) | l > 0\}}.
+\item A function that computes maximum of two integers: \texttt{(\{a : int\},
+    \{b : int\}) => \{r : int | r >= a \&\& r >= b\}}
+\item A record \texttt{r = \{x : int\}} with \texttt{x} not equal to zero:
+  \texttt{\{r <: x : \{self : int | self != 0\}\}}.
+\item An option type that cannot be \texttt{None} and where \texttt{Some} wraps
+  a positive integer: \texttt{\{option(int) <: Some(\{x : int | x > 0\})\}}.
+\end{itemize}
+
+\autoref{example_factorial_liquid} shows an example of a fully defined factorial
+function which utilises liquid types. Note that in contrary to the previous
+implementations it does not consider the case of a negative arugment, as the
+type signature effectively forbids it.
+
+\begin{code}[h]{lexers/sophia.py:SophiaLexer -x}{Factorial utilising liquid
+    types}{example_factorial_liquid}
+function
+  factorial : {n : int | n >= 0} => {r : int | r >= 1 && r >= n}
+  factorial(0) = 1
+  factorial(x) = x * factorial(x - 1)
+\end{code}
+
+\section{Application}
+
+The proposed type refinement system can secure many assumptions, which can be
+used in verification of numerous algorithms. Of out all, the integer boundary
+checking seems to be one of the most important. Thanks to the list length
+predicates, it is possible to statically verify if certain access at point is
+safe (that is, the index is not negative and is lesser than the length of the
+list). Next, it can be used to prevent spends that are either negative or not
+affordable by the contract. In a more practical view, such qualifications may be
+used in a decentralised exchange with a registry of balances represented as
+non-negative integers. These benefits are shown by examples in the
+\autoref{outcome}.
+
+Yet another feature that arises from the liquid types is the ability to assert
+whether some point in code is reachable or not. Since $\Gamma^*$ stores a path
+predicate, one can put restrictions or requirements on its satisfiability. This
+can serve for eliminating dead code and preventing certain situations, like
+failing pattern matching. An example for that is shown in the \autoref{outcome},
+\autoref{similar_character_example}. The benefit is not only the increased
+stability of the execution, but also extended flexibility in access control.
