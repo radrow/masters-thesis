@@ -889,10 +889,10 @@ and unifies them between both sides by applying a proper substitution.
 split_sub($\Gamma^* \vdash \text{args}_{sub} \to \text{ret}_{sub} <: \text{args}_{sup} \to \text{ret}_{sup}$) =
     let args_constrs =
              [ constr
-             | $(\{\text{arg}_{sub} : \tau_{sub}\}, \{\text{arg}_{sub} : \tau_{sub}\}) \leftarrow \text{zip}(\text{args}_{sub}, \text{args}_{sup})$,
+             | $(\{\text{arg}_{sub} : \tau_{sub}\}, \{\text{arg}_{sup} : \tau_{sup}\}) \leftarrow \text{zip}(\text{args}_{sub}, \text{args}_{sup})$,
                constr $\leftarrow$ split_sub($\Gamma^* \vdash \tau_{sup} <: \tau_{sub}$)]
         $\Gamma^*_r$ = bind_args($\text{args}_{sup}$, $\Gamma^*$)
-        subst = [$(\text{arg}_{sub}, \text{arg}_{sup})$ | $(\{\text{arg}_{sub} : \tau_{sub}\}, \{\text{arg}_{sub} : \tau_{sub}\}) \leftarrow \text{zip}(\text{args}_{sub}, \text{args}_{sup})$]
+        subst = [$(\text{arg}_{sub}, \text{arg}_{sup})$ | $(\{\text{arg}_{sub} : \tau_{sub}\}, \{\text{arg}_{sup} : \tau_{sup}\}) \leftarrow \text{zip}(\text{args}_{sub}, \text{args}_{sup})$]
     return args_constrs + split_sub($\Gamma^*_r \vdash \text{apply\_subst}(\text{subst}, \text{ret}_{sub}) <: \text{ret}_{sup}$)
 
 \end{lstlisting}
@@ -1066,7 +1066,7 @@ and find a consistent model that describes the properties of the program as
 precisely as it can be expressed.
 
 The algorithm consists of two parts: validity checking and predicate weakening.
-In each step it verifies if the system is already consistent using the
+In each step, it verifies if the system is already consistent using the
 \texttt{is\_valid} function. If that is the case, the solving is finished and
 the most recent assignment is returned as the solution. If an invalid constraint
 is found, the \texttt{weaken} function is called to adjust the predicates under
@@ -1087,9 +1087,9 @@ At this point, this process considers only subtyping constraints.
 Well-formedness does not need validation, as the assignment has been initialised
 in a way that guarantees that the predicates are not ill-typed. Reachability and
 unreachability may break, but they can be verified once the subtyping is
-resolved, because they do not contribute to the weakening process.
+resolved because they do not contribute to the weakening process.
 
-Note that it does not necessarily prevent contradictions from occuring in the
+Note that it does not necessarily prevent contradictions from occurring in the
 inferred qualifications. If a constraint was created in a contradictory
 environment or describes a looping or crashing computation, it will induce false
 assumptions and therefore false conclusions. Thus, variables typed in such a way
@@ -1235,7 +1235,7 @@ parameters.
 
 \section{Postprocessing}
 
-At this point all the constraints should be satisfied by the inferred
+At this point, all the constraints should be satisfied by the inferred
 predicates, some of which may contain a lot of redundancy. For example, it is
 possible that the function computing an absolute value gets the type $\{x :
 \texttt{int}\} \to \{\nu : \texttt{int} | \nu \geq 0 \land \nu \neq -1 \land \nu
